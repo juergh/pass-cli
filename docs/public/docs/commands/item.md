@@ -137,6 +137,7 @@ pass-cli item create login [OPTIONS]
 - `--generate-password[=SETTINGS]` - Generate a random password (optional)
 - `--generate-passphrase[=WORD_COUNT]` - Generate a passphrase (optional)
 - `--url URL` - Associated URLs (can be used multiple times)
+- `--note NOTE` - Note content (optional)
 - `--get-template` - Output a JSON template structure
 - `--from-template FILE` - Create from template file or `-` for stdin
 - `--folder-id FOLDER_ID` - ID of the folder to create the item in. Omit to create it at the vault root
@@ -170,6 +171,15 @@ pass-cli item create login \
   --username "myuser" \
   --password "mypassword" \
   --url "https://github.com"
+
+# Create a login item with a note
+pass-cli item create login \
+  --vault-name "Personal" \
+  --title "GitHub Account" \
+  --username "myuser" \
+  --password "mypassword" \
+  --url "https://github.com" \
+  --note "Work-related account with SSH access"
 
 # Create login with generated password
 pass-cli item create login \

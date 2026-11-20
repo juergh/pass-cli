@@ -41,6 +41,8 @@ pub struct LoginTemplate {
     pub urls: Vec<String>,
     #[serde(default)]
     pub extra_fields: Vec<ExtraFieldTemplate>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 impl TryFrom<LoginTemplate> for LoginItemCreatePayload {
@@ -56,6 +58,7 @@ impl TryFrom<LoginTemplate> for LoginItemCreatePayload {
             totp_uri: value.totp_uri,
             urls: value.urls,
             extra_fields,
+            note: value.note,
         })
     }
 }
@@ -108,6 +111,10 @@ pub struct LoginArgs {
         help = "URLs associated with the login (can be specified multiple times)"
     )]
     url: Vec<String>,
+
+    /// Note content
+    #[arg(long, help = "Note content")]
+    note: Option<String>,
 
     /// Folder ID to create the item in
     #[arg(long, help = "Folder ID to create the item in")]
@@ -198,6 +205,7 @@ pub async fn run(mut args: LoginArgs, client: PassClient) -> Result<()> {
         totp_uri: None,
         urls: args.url,
         extra_fields: vec![],
+        note: args.note,
     };
 
     let folder_id = args
@@ -312,7 +320,32 @@ async fn generate_custom_passphrase(client: &PassClient, word_count_str: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use pass::custom::CustomFieldContentPayload;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: LoginArgs,
+    }
+
+    #[test]
+    fn test_login_args_with_note() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--title",
+            "My Login",
+            "--username",
+            "user1",
+            "--note",
+            "My secret note",
+        ])
+        .expect("Should parse arguments");
+
+        assert_eq!(cli.args.title.as_deref(), Some("My Login"));
+        assert_eq!(cli.args.username.as_deref(), Some("user1"));
+        assert_eq!(cli.args.note.as_deref(), Some("My secret note"));
+    }
 
     #[test]
     fn default_template_has_empty_extra_fields() {
@@ -340,5 +373,45 @@ mod tests {
             &payload.extra_fields[0].content,
             CustomFieldContentPayload::Hidden(v) if v.is_empty()
         ));
+    }
+
+    #[test]
+    fn test_login_template_serialization_with_note() {
+        let template = LoginTemplate {
+            title: "GitHub".to_string(),
+            username: Some("user".to_string()),
+            email: Some("user@example.com".to_string()),
+            password: Some("pass".to_string()),
+            totp_uri: None,
+            urls: vec!["https://github.com".to_string()],
+            extra_fields: vec![],
+            note: Some("Account recovery codes stored in safe".to_string()),
+        };
+
+        let json = serde_json::to_string(&template).unwrap();
+        let deserialized: LoginTemplate = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.title, "GitHub");
+        assert_eq!(
+            deserialized.note.as_deref(),
+            Some("Account recovery codes stored in safe")
+        );
+
+        let payload = LoginItemCreatePayload::try_from(deserialized).unwrap();
+        assert_eq!(payload.title, "GitHub");
+        assert_eq!(
+            payload.note.as_deref(),
+            Some("Account recovery codes stored in safe")
+        );
+    }
+
+    #[test]
+    fn test_login_template_deserialization_without_note() {
+        let json = r#"{"title":"GitHub","username":"user","email":null,"password":"password123","totp_uri":null,"urls":[]}"#;
+        let deserialized: LoginTemplate = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.title, "GitHub");
+        assert_eq!(deserialized.note, None);
+
+        let payload = LoginItemCreatePayload::try_from(deserialized).unwrap();
+        assert_eq!(payload.note, None);
     }
 }

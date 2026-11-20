@@ -35,6 +35,7 @@ pub struct LoginItemCreatePayload {
     pub totp_uri: Option<String>,
     #[sdk_export(default)]
     pub extra_fields: Vec<CustomFieldPayload>,
+    pub note: Option<String>,
 }
 
 #[sdk_export]
@@ -53,7 +54,7 @@ impl<C: PassClientContext> PassClient<C> {
             .create_item_request(
                 share_id,
                 &payload.title,
-                "",
+                payload.note.as_deref().unwrap_or(""),
                 ItemContent::Login(LoginItem {
                     email: payload.email.unwrap_or_default(),
                     username: payload.username.unwrap_or_default(),
@@ -156,6 +157,7 @@ mod tests {
                             content: CustomFieldContentPayload::Totp(ITEM_TOTP.to_string()),
                         },
                     ],
+                    note: None,
                 },
                 None,
             )
@@ -189,6 +191,7 @@ mod tests {
         let parsed_item_content = ItemData::deserialize(&decrypted_item_content)
             .expect("Should be able to deserialize ItemData");
         assert_eq!(ITEM_TITLE, parsed_item_content.title);
+        assert_eq!("", parsed_item_content.note);
 
         let login_item = match parsed_item_content.content {
             ItemContent::Login(login_item) => login_item,
@@ -242,6 +245,7 @@ mod tests {
                         field_name: "2FA".to_string(),
                         content: CustomFieldContentPayload::Totp("otpauth://...".to_string()),
                     }],
+                    note: None,
                 },
                 None,
             )
@@ -249,5 +253,92 @@ mod tests {
             .expect_err("Should reject an invalid TOTP extra field");
 
         assert!(format!("{err:#}").contains("Invalid TOTP value for field '2FA'"));
+    }
+
+    #[muon_test::test]
+    async fn test_create_login_with_note(server: muon_test::Server) {
+        let (raw_client, api) = server.client::<()>();
+        const ITEM_TITLE: &str = "MyItem";
+        const ITEM_EMAIL: &str = "my@item.email.local";
+        const ITEM_USERNAME: &str = "MyUsername";
+        const ITEM_PASSWORD: &str = "MyPassword";
+        const ITEM_WEBSITE: &str = "http://example.local";
+        const ITEM_NOTE: &str = "Important note about this login";
+        const SHARE_ID: &str = "MyShareID";
+        const ITEM_ID: &str = "MyItemID";
+
+        let client = make_test_pass_client_with_setup(raw_client, &api, PlanType::Free).await;
+        setup_share_keys(&api, SHARE_ID);
+        setup_vault_share(&api, SHARE_ID);
+
+        let handled = api.handler_with_method(
+            Method::POST,
+            format!("/pass/v1/share/{SHARE_ID}/item"),
+            move |_| {
+                success(CreateItemResponse {
+                    item: ItemRevision {
+                        item_id: ITEM_ID.to_string(),
+                        revision: 0,
+                        content_format_version: 0,
+                        key_rotation: 0,
+                        content: "".to_string(),
+                        item_key: None,
+                        state: 0,
+                        flags: 0,
+                        alias_email: None,
+                        create_time: 0,
+                        modify_time: 0,
+                        last_use_time: None,
+                        folder_id: None,
+                    },
+                })
+            },
+        );
+
+        let recorder = api.new_recorder();
+        let item_id = client
+            .create_login(
+                &share_id!(SHARE_ID),
+                LoginItemCreatePayload {
+                    title: ITEM_TITLE.to_string(),
+                    email: Some(ITEM_EMAIL.to_string()),
+                    username: Some(ITEM_USERNAME.to_string()),
+                    password: Some(ITEM_PASSWORD.to_string()),
+                    urls: vec![ITEM_WEBSITE.to_string()],
+                    totp_uri: None,
+                    extra_fields: vec![],
+                    note: Some(ITEM_NOTE.to_string()),
+                },
+                None,
+            )
+            .await
+            .expect("Should be able to create the item");
+
+        assert_hit!(handled);
+
+        assert_eq!(ITEM_ID, item_id.value());
+
+        let request: CreateItemRequest = last_request!(recorder);
+
+        let decoded_encrypted_item_key = crate::utils::b64_decode(&request.item_key).unwrap();
+        let decrypted_item_key = crate::domain::crypto::decrypt(
+            &decoded_encrypted_item_key,
+            &TEST_SHARE_KEY,
+            EncryptionTag::ItemKey,
+        )
+        .expect("Should be able to decrypt item key");
+
+        let decoded_item_content = crate::utils::b64_decode(&request.content).unwrap();
+        let decrypted_item_content = crate::domain::crypto::decrypt(
+            &decoded_item_content,
+            &decrypted_item_key,
+            EncryptionTag::ItemContent,
+        )
+        .expect("Should be able to decrypt item content");
+
+        let parsed_item_content = ItemData::deserialize(&decrypted_item_content)
+            .expect("Should be able to deserialize ItemData");
+        assert_eq!(ITEM_TITLE, parsed_item_content.title);
+        assert_eq!(ITEM_NOTE, parsed_item_content.note);
     }
 }
